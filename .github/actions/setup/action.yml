@@ -1,0 +1,34 @@
+name: Setup
+
+runs:
+  using: composite
+  steps:
+    - name: Install Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18.15
+    - name: Cache node modules
+      uses: actions/cache@v4
+      id: cache-modules
+      with:
+        path: './node_modules/*'
+        key: yarn-pool-${{ hashFiles('./yarn.lock') }}
+    - name: Cache library node modules
+      uses: actions/cache@v4
+      id: cache-lib
+      with:
+        path: './lib/balancer-v3-monorepo/node_modules/*'
+        key: lib-${{ hashFiles('./lib/balancer-v3-monorepo/yarn.lock') }}
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+    - name: Install lcov
+      shell: bash
+      run: sudo apt-get install lcov
+    - name: Install fresh
+      shell: bash
+      run: sh ./scripts/install-fresh.sh
+      if: steps.cache-lib.outputs.cache-hit != 'true'
+    - name: Yarn
+      run: yarn --immutable
+      shell: bash
+      if: steps.cache-modules.outputs.cache-hit != 'true'
