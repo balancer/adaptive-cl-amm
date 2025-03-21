@@ -5,6 +5,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { PoolRoleAccounts, LiquidityManagement } from "@balancer-labs/v3-interfaces/contracts/vault/VaultTypes.sol";
@@ -15,7 +16,6 @@ import { InputHelpers } from "@balancer-labs/v3-solidity-utils/contracts/helpers
 import { ArrayHelpers } from "@balancer-labs/v3-solidity-utils/contracts/test/ArrayHelpers.sol";
 import { FixedPoint } from "@balancer-labs/v3-solidity-utils/contracts/math/FixedPoint.sol";
 import { PoolFactoryMock } from "@balancer-labs/v3-vault/contracts/test/PoolFactoryMock.sol";
-import { GyroPoolMath } from "@balancer-labs/v3-pool-gyro/contracts/lib/GyroPoolMath.sol";
 import { BaseVaultTest } from "@balancer-labs/v3-vault/test/foundry/utils/BaseVaultTest.sol";
 
 import { ReClammPoolContractsDeployer } from "./ReClammPoolContractsDeployer.sol";
@@ -60,8 +60,8 @@ contract BaseReClammTest is ReClammPoolContractsDeployer, BaseVaultTest {
     }
 
     function setPriceRange(uint256 priceRange) internal {
-        uint256 Q0 = GyroPoolMath.sqrt(priceRange, 5);
-        _sqrtQ0 = SafeCast.toUint96(GyroPoolMath.sqrt(Q0, 5));
+        uint256 Q0 = Math.sqrt(priceRange * FixedPoint.ONE);
+        _sqrtQ0 = SafeCast.toUint96(Math.sqrt(Q0 * FixedPoint.ONE));
     }
 
     function setSqrtQ0(uint96 newSqrtQ0) internal {

@@ -26,7 +26,7 @@ type SqrtQ0State = {
 export function getVirtualBalances(
   balancesScaled18: bigint[],
   lastVirtualBalances: bigint[],
-  c: bigint,
+  timeConstant: bigint,
   lastTimestamp: number,
   currentTimestamp: number,
   centerednessMargin: bigint,
@@ -48,28 +48,27 @@ export function getVirtualBalances(
     sqrtQ0State.endTime
   );
 
+  const isPoolAboveCenter = isAboveCenter(balancesScaled18, lastVirtualBalances);
+
   if (
     sqrtQ0State.startTime != 0 &&
     currentTimestamp > sqrtQ0State.startTime &&
     (currentTimestamp < sqrtQ0State.endTime || lastTimestamp < sqrtQ0State.endTime)
   ) {
-    const lastSqrtQ0 = calculateSqrtQ0(
-      lastTimestamp,
-      sqrtQ0State.startSqrtQ0,
-      sqrtQ0State.endSqrtQ0,
-      sqrtQ0State.startTime,
-      sqrtQ0State.endTime
-    );
+    const centeredness = calculateCenteredness(balancesScaled18, lastVirtualBalances);
+    const centerednessFactor = isPoolAboveCenter ? fpDivDown(fp(1), centeredness) : centeredness;
 
-    const rACenter = fpMulDown(lastVirtualBalances[0], lastSqrtQ0 - FP_ONE);
-
-    virtualBalances[0] = fpDivDown(rACenter, currentSqrtQ0 - FP_ONE);
-
-    const currentInvariant = computeInvariant(balancesScaled18, lastVirtualBalances, Rounding.ROUND_DOWN);
+    const a = fpMulDown(currentSqrtQ0, currentSqrtQ0) - fp(1);
+    const b = fpMulDown(balancesScaled18[1], fp(1) + centerednessFactor);
+    const c = fpMulDown(fpMulDown(balancesScaled18[1], balancesScaled18[1]), centerednessFactor);
 
     virtualBalances[1] = fpDivDown(
-      currentInvariant,
-      fpMulDown(fpMulDown(currentSqrtQ0, currentSqrtQ0), virtualBalances[0])
+      b + BigInt(Math.sqrt(Number(fp(1) * (fpMulDown(b, b) + fpMulDown(fp(4), fpMulDown(a, c)))))),
+      fpMulDown(fp(2), a)
+    );
+    virtualBalances[0] = fpDivDown(
+      fpDivDown(fpMulDown(balancesScaled18[0], virtualBalances[1]), balancesScaled18[1]),
+      centerednessFactor
     );
 
     changed = true;
@@ -78,11 +77,11 @@ export function getVirtualBalances(
   if (isPoolInRange(balancesScaled18, lastVirtualBalances, centerednessMargin) == false) {
     const q0 = fpMulDown(currentSqrtQ0, currentSqrtQ0);
 
-    const base = fromFp(FP_ONE - c);
+    const base = fromFp(FP_ONE - timeConstant);
     const exponent = fromFp(fp(currentTimestamp - lastTimestamp));
     const powResult = base.pow(exponent);
 
-    if (isAboveCenter(balancesScaled18, lastVirtualBalances)) {
+    if (isPoolAboveCenter) {
       virtualBalances[1] = fpMulDown(lastVirtualBalances[1], fp(powResult));
       virtualBalances[0] = fpDivDown(
         fpMulDown(balancesScaled18[0], virtualBalances[1] + balancesScaled18[1]),
@@ -105,7 +104,7 @@ export function getVirtualBalances(
 export function computeInvariant(
   balancesScaled18: bigint[],
   lastVirtualBalances: bigint[],
-  c: bigint,
+  timeConstant: bigint,
   lastTimestamp: number,
   currentTimestamp: number,
   centerednessMargin: bigint,
@@ -115,7 +114,7 @@ export function computeInvariant(
   const [virtualBalances, _] = getVirtualBalances(
     balancesScaled18,
     lastVirtualBalances,
-    c,
+    timeConstant,
     lastTimestamp,
     currentTimestamp,
     centerednessMargin,

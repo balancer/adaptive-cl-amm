@@ -3,10 +3,8 @@
 pragma solidity ^0.8.24;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { GyroPoolMath } from "@balancer-labs/v3-pool-gyro/contracts/lib/GyroPoolMath.sol";
 import { FixedPoint } from "@balancer-labs/v3-solidity-utils/contracts/math/FixedPoint.sol";
 import { ArrayHelpers } from "@balancer-labs/v3-solidity-utils/contracts/test/ArrayHelpers.sol";
 import { Rounding } from "@balancer-labs/v3-interfaces/contracts/vault/VaultTypes.sol";
@@ -128,10 +126,10 @@ contract ReClammPoolVirtualBalancesTest is BaseReClammTest {
         }
     }
 
-    function testChangingDifferentPriceRange_Fuzz(uint256 newSqrtQ) public {
-        newSqrtQ = bound(newSqrtQ, 1.4e18, 1_000_000e18);
+    function testChangingDifferentPriceRange_Fuzz(uint96 newSqrtQ0) public {
+        newSqrtQ0 = SafeCast.toUint96(bound(newSqrtQ0, 1.1e18, 10e18));
 
-        uint96 initialSqrtQ = sqrtQ0();
+        uint256 initialSqrtQ0 = ReClammPool(pool).getCurrentSqrtQ0();
 
         uint32 duration = 2 hours;
 
@@ -140,21 +138,21 @@ contract ReClammPoolVirtualBalancesTest is BaseReClammTest {
         uint32 currentTimestamp = uint32(block.timestamp);
 
         vm.prank(admin);
-        ReClammPool(pool).setSqrtQ0(initialSqrtQ, currentTimestamp, currentTimestamp + duration);
+        ReClammPool(pool).setSqrtQ0(newSqrtQ0, currentTimestamp, currentTimestamp + duration);
         skip(duration);
 
         uint256[] memory poolVirtualBalancesAfter = ReClammPool(pool).getLastVirtualBalances();
 
-        if (newSqrtQ > initialSqrtQ) {
+        if (newSqrtQ0 > initialSqrtQ0) {
             assertLt(
                 poolVirtualBalancesAfter[0],
                 poolVirtualBalancesBefore[0],
-                "Virtual A balance after should be less than before"
+                "Virtual A balance after should be lower than before"
             );
-            assertGt(
+            assertLt(
                 poolVirtualBalancesAfter[1],
                 poolVirtualBalancesBefore[1],
-                "Virtual B balance after should be greater than before"
+                "Virtual B balance after should be lower than before"
             );
         } else {
             assertGe(
@@ -162,10 +160,10 @@ contract ReClammPoolVirtualBalancesTest is BaseReClammTest {
                 poolVirtualBalancesBefore[0],
                 "Virtual A balance after should be greater than before"
             );
-            assertLe(
+            assertGe(
                 poolVirtualBalancesAfter[1],
                 poolVirtualBalancesBefore[1],
-                "Virtual B balance after should be less than before"
+                "Virtual B balance after should be greater than before"
             );
         }
     }

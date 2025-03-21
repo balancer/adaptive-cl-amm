@@ -4,6 +4,8 @@
 pragma solidity ^0.8.24;
 
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+
 import { Rounding } from "@balancer-labs/v3-interfaces/contracts/vault/VaultTypes.sol";
 
 import { FixedPoint } from "@balancer-labs/v3-solidity-utils/contracts/math/FixedPoint.sol";
@@ -103,7 +105,7 @@ library ReClammMath {
     function getVirtualBalances(
         uint256[] memory balancesScaled18,
         uint256[] memory lastVirtualBalances,
-        uint256 c,
+        uint256 timeConstant,
         uint32 lastTimestamp,
         uint32 currentTimestamp,
         uint256 centerednessMargin,
@@ -130,58 +132,87 @@ library ReClammMath {
             _sqrtQ0State.endTime
         );
 
+        bool isPoolAboveCenter = isAboveCenter(balancesScaled18, lastVirtualBalances);
+
         if (
             _sqrtQ0State.startTime != 0 &&
             currentTimestamp > _sqrtQ0State.startTime &&
             (currentTimestamp < _sqrtQ0State.endTime || lastTimestamp < _sqrtQ0State.endTime)
         ) {
-            uint256 lastSqrtQ0 = calculateSqrtQ0(
-                lastTimestamp,
-                _sqrtQ0State.startSqrtQ0,
-                _sqrtQ0State.endSqrtQ0,
-                _sqrtQ0State.startTime,
-                _sqrtQ0State.endTime
-            );
-
-            // Ra_center = Va * (lastSqrtQ0 - 1)
-            uint256 rACenter = lastVirtualBalances[0].mulDown(lastSqrtQ0 - FixedPoint.ONE);
-
-            // Va = Ra_center / (currentSqrtQ0 - 1)
-            virtualBalances[0] = rACenter.divDown(currentSqrtQ0 - FixedPoint.ONE);
-
-            uint256 currentInvariant = computeInvariant(balancesScaled18, lastVirtualBalances, Rounding.ROUND_DOWN);
-
-            // Vb = currentInvariant / (currentQ0 * Va)
-            virtualBalances[1] = currentInvariant.divDown(
-                currentSqrtQ0.mulDown(currentSqrtQ0).mulDown(virtualBalances[0])
+            virtualBalances = _calculateVirtualBalancesUpdatingQ0(
+                currentSqrtQ0,
+                balancesScaled18,
+                lastVirtualBalances,
+                isPoolAboveCenter
             );
 
             changed = true;
         }
 
-        if (isPoolInRange(balancesScaled18, lastVirtualBalances, centerednessMargin) == false) {
-            uint256 q0 = currentSqrtQ0.mulDown(currentSqrtQ0);
-
-            if (isAboveCenter(balancesScaled18, lastVirtualBalances)) {
-                virtualBalances[1] = lastVirtualBalances[1].mulDown(
-                    LogExpMath.pow(FixedPoint.ONE - c, (currentTimestamp - lastTimestamp) * FixedPoint.ONE)
-                );
-                // Va = (Ra * (Vb + Rb)) / (((Q0 - 1) * Vb) - Rb)
-                virtualBalances[0] = (balancesScaled18[0].mulDown(virtualBalances[1] + balancesScaled18[1])).divDown(
-                    (q0 - FixedPoint.ONE).mulDown(virtualBalances[1]) - balancesScaled18[1]
-                );
-            } else {
-                virtualBalances[0] = lastVirtualBalances[0].mulDown(
-                    LogExpMath.pow(FixedPoint.ONE - c, (currentTimestamp - lastTimestamp) * FixedPoint.ONE)
-                );
-                // Vb = (Rb * (Va + Ra)) / (((Q0 - 1) * Va) - Ra)
-                virtualBalances[1] = (balancesScaled18[1].mulDown(virtualBalances[0] + balancesScaled18[0])).divDown(
-                    (q0 - FixedPoint.ONE).mulDown(virtualBalances[0]) - balancesScaled18[0]
-                );
-            }
+        if (isPoolInRange(balancesScaled18, virtualBalances, centerednessMargin) == false) {
+            virtualBalances = _calculateVirtualBalancesOutOfRange(
+                currentSqrtQ0,
+                balancesScaled18,
+                virtualBalances,
+                isPoolAboveCenter,
+                timeConstant,
+                currentTimestamp,
+                lastTimestamp
+            );
 
             changed = true;
         }
+    }
+
+    function _calculateVirtualBalancesUpdatingQ0(
+        uint256 currentSqrtQ0,
+        uint256[] memory balancesScaled18,
+        uint256[] memory lastVirtualBalances,
+        bool isPoolAboveCenter
+    ) private pure returns (uint256[] memory virtualBalances) {
+        virtualBalances = new uint256[](2);
+
+        uint256 poolCenteredness = calculateCenteredness(balancesScaled18, lastVirtualBalances);
+        uint256 centerednessFactor = isPoolAboveCenter ? FixedPoint.ONE.divDown(poolCenteredness) : poolCenteredness;
+        uint256 a = currentSqrtQ0.mulDown(currentSqrtQ0) - FixedPoint.ONE;
+        uint256 b = balancesScaled18[1].mulDown(FixedPoint.ONE + centerednessFactor);
+        uint256 c = balancesScaled18[1].mulDown(balancesScaled18[1]).mulDown(centerednessFactor);
+        virtualBalances[1] = (b + Math.sqrt((b.mulDown(b) + 4 * a.mulDown(c)) * FixedPoint.ONE)).divDown(2 * a);
+        virtualBalances[0] = (balancesScaled18[0].mulDown(virtualBalances[1])).divDown(balancesScaled18[1]).divDown(
+            centerednessFactor
+        );
+    }
+
+    function _calculateVirtualBalancesOutOfRange(
+        uint256 currentSqrtQ0,
+        uint256[] memory balancesScaled18,
+        uint256[] memory virtualBalances,
+        bool isPoolAboveCenter,
+        uint256 timeConstant,
+        uint32 currentTimestamp,
+        uint32 lastTimestamp
+    ) private pure returns (uint256[] memory) {
+        uint256 q0 = currentSqrtQ0.mulDown(currentSqrtQ0);
+
+        if (isPoolAboveCenter) {
+            virtualBalances[1] = virtualBalances[1].mulDown(
+                LogExpMath.pow(FixedPoint.ONE - timeConstant, (currentTimestamp - lastTimestamp) * FixedPoint.ONE)
+            );
+            // Va = (Ra * (Vb + Rb)) / (((Q0 - 1) * Vb) - Rb)
+            virtualBalances[0] = (balancesScaled18[0].mulDown(virtualBalances[1] + balancesScaled18[1])).divDown(
+                (q0 - FixedPoint.ONE).mulDown(virtualBalances[1]) - balancesScaled18[1]
+            );
+        } else {
+            virtualBalances[0] = virtualBalances[0].mulDown(
+                LogExpMath.pow(FixedPoint.ONE - timeConstant, (currentTimestamp - lastTimestamp) * FixedPoint.ONE)
+            );
+            // Vb = (Rb * (Va + Ra)) / (((Q0 - 1) * Va) - Ra)
+            virtualBalances[1] = (balancesScaled18[1].mulDown(virtualBalances[0] + balancesScaled18[0])).divDown(
+                (q0 - FixedPoint.ONE).mulDown(virtualBalances[0]) - balancesScaled18[0]
+            );
+        }
+
+        return virtualBalances;
     }
 
     function isPoolInRange(
